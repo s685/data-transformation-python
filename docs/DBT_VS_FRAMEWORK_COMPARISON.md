@@ -11,6 +11,175 @@
 
 ## Architecture Comparison
 
+### High-Level Architecture: How Models Run in Snowflake
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                    dbt: MODEL EXECUTION IN SNOWFLAKE                                │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+
+    ┌──────────────┐
+    │   Developer  │
+    │  (User/CI/CD)│
+    └──────┬───────┘
+           │
+           │ dbt run
+           ▼
+    ┌─────────────────────────────────────────────────────────────┐
+    │                      dbt CLI                                 │
+    │  ┌──────────────────────────────────────────────────────┐   │
+    │  │ 1. Load Config (dbt_project.yml, profiles.yml)      │   │
+    │  │ 2. Parse SQL Models (models/*.sql)                 │   │
+    │  │ 3. Build Dependency Graph (from ref() calls)        │   │
+    │  │ 4. Create Execution Plan (parallel groups)         │   │
+    │  └──────────────────────────────────────────────────────┘   │
+    └──────────────────────┬──────────────────────────────────────┘
+                           │
+                           │ Compiled SQL + Execution Plan
+                           ▼
+    ┌─────────────────────────────────────────────────────────────┐
+    │              dbt Connection Pool (Threads)                  │
+    │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐     │
+    │  │ Thread 1 │  │ Thread 2 │  │ Thread 3 │  │ Thread 4 │     │
+    │  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘     │
+    │       │             │             │             │            │
+    │       └─────────────┴─────────────┴─────────────┘            │
+    │                          │                                    │
+    └──────────────────────────┼────────────────────────────────────┘
+                               │
+                               │ SQL Queries (Parallel)
+                               ▼
+    ┌─────────────────────────────────────────────────────────────┐
+    │                      SNOWFLAKE                              │
+    │  ┌──────────────────────────────────────────────────────┐  │
+    │  │                                                       │  │
+    │  │  ┌──────────────┐  ┌──────────────┐  ┌────────────┐ │  │
+    │  │  │   Warehouse  │  │   Database   │  │   Schema   │ │  │
+    │  │  │  (Compute)   │  │  (Storage)   │  │  (Models)  │ │  │
+    │  │  └──────┬───────┘  └──────┬───────┘  └─────┬─────┘ │  │
+    │  │         │                  │                 │        │  │
+    │  │         └──────────────────┴─────────────────┘        │  │
+    │  │                        │                              │  │
+    │  │  ┌──────────────────────────────────────────────┐    │  │
+    │  │  │         Materialized Objects                 │    │  │
+    │  │  │  ┌──────────┐  ┌──────────┐  ┌──────────┐   │    │  │
+    │  │  │  │  Views   │  │  Tables  │  │Incremental│   │    │  │
+    │  │  │  │          │  │          │  │  Tables   │   │    │  │
+    │  │  │  └──────────┘  └──────────┘  └──────────┘   │    │  │
+    │  │  └──────────────────────────────────────────────┘    │  │
+    │  │                                                       │  │
+    │  └───────────────────────────────────────────────────────┘  │
+    │                                                              │
+    └──────────────────────────────────────────────────────────────┘
+
+Execution Flow:
+    1. Developer runs: dbt run
+    2. dbt parses all models and builds dependency graph
+    3. dbt creates execution plan (models grouped by dependencies)
+    4. dbt opens connection pool (threads = 4 by default)
+    5. Each thread executes models in parallel (independent models)
+    6. SQL is compiled and sent to Snowflake
+    7. Snowflake executes CREATE TABLE/VIEW/INSERT statements
+    8. Results: Tables/Views created in Snowflake schema
+
+
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│              PYTHON FRAMEWORK: MODEL EXECUTION IN SNOWFLAKE                         │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+
+    ┌──────────────┐
+    │   Developer  │
+    │  (User/CI/CD)│
+    └──────┬───────┘
+           │
+           │ framework run model_name
+           ▼
+    ┌─────────────────────────────────────────────────────────────┐
+    │                  Python Framework CLI                        │
+    │  ┌──────────────────────────────────────────────────────┐  │
+    │  │ 1. Load Config (profiles.yml, sources.yml)            │  │
+    │  │ 2. SQL Parser (sqlglot AST + Jinja2)                 │  │
+    │  │ 3. Build Dependency Graph (MANUAL - from ref())      │  │
+    │  │ 4. Check Lineage (MANDATORY for parallel)              │  │
+    │  │ 5. Create Execution Plan (based on lineage)            │  │
+    │  └──────────────────────────────────────────────────────┘  │
+    └──────────────────────┬──────────────────────────────────────┘
+                           │
+                           │ Parsed SQL + Execution Plan
+                           ▼
+    ┌─────────────────────────────────────────────────────────────┐
+    │         Python Framework Connection Pool (Lazy Init)        │
+    │  ┌──────────────────────────────────────────────────────┐  │
+    │  │  Connection Pool (size = threads, default = 1)      │  │
+    │  │  ┌──────────┐  ┌──────────┐  ┌──────────┐           │  │
+    │  │  │Conn 1    │  │Conn 2    │  │Conn 3    │  (if      │  │
+    │  │  │(on-demand│  │(on-demand│  │(on-demand│   threads │  │
+    │  │  │created)  │  │created)  │  │created)  │   > 1)    │  │
+    │  │  └────┬─────┘  └────┬─────┘  └────┬─────┘           │  │
+    │  │       │             │             │                  │  │
+    │  │       └─────────────┴─────────────┘                  │  │
+    │  │                          │                            │  │
+    │  └──────────────────────────┼────────────────────────────┘  │
+    │                             │                                │
+    │  ┌──────────────────────────────────────────────────────┐  │
+    │  │              Materializer                             │  │
+    │  │  ┌──────────┐  ┌──────────┐  ┌──────────┐           │  │
+    │  │  │  View    │  │  Table   │  │   CDC    │           │  │
+    │  │  │Strategy  │  │Strategy  │  │Strategy  │           │  │
+    │  │  └────┬─────┘  └────┬─────┘  └────┬─────┘           │  │
+    │  │       │             │             │                  │  │
+    │  │       └─────────────┴─────────────┘                  │  │
+    │  │                          │                            │  │
+    │  │                          ▼                            │  │
+    │  │              ┌──────────────────────┐                 │  │
+    │  │              │  Polars CDC Engine    │                 │  │
+    │  │              │  (Rust-based, Fast)   │                 │  │
+    │  │              └──────────┬────────────┘                 │  │
+    │  └─────────────────────────┼─────────────────────────────┘  │
+    │                             │                                │
+    └─────────────────────────────┼────────────────────────────────┘
+                                  │
+                                  │ SQL Queries (Sequential/Parallel)
+                                  ▼
+    ┌─────────────────────────────────────────────────────────────┐
+    │                      SNOWFLAKE                              │
+    │  ┌──────────────────────────────────────────────────────┐  │
+    │  │                                                       │  │
+    │  │  ┌──────────────┐  ┌──────────────┐  ┌────────────┐ │  │
+    │  │  │   Warehouse  │  │   Database   │  │   Schema   │ │  │
+    │  │  │  (Compute)   │  │  (Storage)   │  │  (Models)  │ │  │
+    │  │  └──────┬───────┘  └──────┬───────┘  └─────┬─────┘ │  │
+    │  │         │                  │                 │        │  │
+    │  │         └──────────────────┴─────────────────┘        │  │
+    │  │                        │                              │  │
+    │  │  ┌──────────────────────────────────────────────┐    │  │
+    │  │  │         Materialized Objects                 │    │  │
+    │  │  │  ┌──────────┐  ┌──────────┐  ┌──────────┐   │    │  │
+    │  │  │  │  Views   │  │  Tables  │  │CDC Tables │   │    │  │
+    │  │  │  │          │  │          │  │(with      │   │    │  │
+    │  │  │  │          │  │          │  │obsolete_  │   │    │  │
+    │  │  │  │          │  │          │  │date)      │   │    │  │
+    │  │  │  └──────────┘  └──────────┘  └──────────┘   │    │  │
+    │  │  └──────────────────────────────────────────────┘    │  │
+    │  │                                                       │  │
+    │  └───────────────────────────────────────────────────────┘  │
+    │                                                              │
+    └──────────────────────────────────────────────────────────────┘
+
+Execution Flow:
+    1. Developer runs: framework run model_name
+    2. Framework parses SQL model (sqlglot AST)
+    3. Framework builds dependency graph (MANUAL - must track lineage)
+    4. Framework checks lineage (MANDATORY for parallel execution)
+    5. Framework creates execution plan (based on dependency graph)
+    6. Framework opens connection pool (lazy init, default = 1 connection)
+    7. Materializer selects strategy (View/Table/CDC/etc.)
+    8. For CDC: Polars engine processes data (Rust-based, fast)
+    9. SQL is generated and sent to Snowflake
+    10. Snowflake executes CREATE TABLE/VIEW/MERGE statements
+    11. Results: Tables/Views created in Snowflake schema
+```
+
 ### Side-by-Side Architecture Flowcharts
 
 ```
