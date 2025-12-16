@@ -11,84 +11,342 @@
 
 ## Architecture Comparison
 
-### dbt Architecture
+### Side-by-Side Architecture Flowcharts
 
-```mermaid
-graph TB
-    subgraph "dbt Core"
-        A[dbt CLI] --> B[Project Config]
-        B --> C[profiles.yml]
-        B --> D[models/]
-        B --> E[macros/]
-        B --> F[tests/]
-        
-        A --> G[Parser]
-        G --> H[Compilation Engine]
-        H --> I[Dependency Graph]
-        I --> J[Execution Plan]
-        
-        J --> K[Connection Pool]
-        K --> L[(Snowflake)]
-        
-        J --> M[Materialization]
-        M --> N[Table/View/Incremental]
-    end
-    
-    subgraph "External Tools"
-        O[dbt Cloud] -.-> A
-        P[CI/CD] -.-> A
-        Q[Data Lineage Tools] -.-> I
-    end
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                                    dbt ARCHITECTURE                                  │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+
+                    ┌─────────────┐
+                    │  dbt CLI    │
+                    │  (Command)  │
+                    └──────┬──────┘
+                           │
+        ┌──────────────────┼──────────────────┐
+        │                  │                  │
+        ▼                  ▼                  ▼
+┌───────────────┐  ┌──────────────┐  ┌──────────────┐
+│ Project Config│  │ profiles.yml │  │  models/     │
+│   (dbt.yml)   │  │  (Connection)│  │  (SQL Files) │
+└───────┬───────┘  └──────────────┘  └──────┬───────┘
+        │                                    │
+        └────────────────┬───────────────────┘
+                         │
+                         ▼
+                ┌────────────────┐
+                │     Parser      │
+                │  (Jinja2 + SQL) │
+                └────────┬─────────┘
+                         │
+                         ▼
+            ┌────────────────────────┐
+            │  Compilation Engine    │
+            │  (Template Rendering)  │
+            └────────────┬────────────┘
+                         │
+                         ▼
+            ┌────────────────────────┐
+            │   Dependency Graph     │
+            │  (Auto-built from ref) │
+            └────────────┬────────────┘
+                         │
+                         ▼
+            ┌────────────────────────┐
+            │    Execution Plan      │
+            │  (Parallel Execution)  │
+            └────────────┬────────────┘
+                         │
+        ┌────────────────┼────────────────┐
+        │                │                │
+        ▼                ▼                ▼
+┌───────────────┐ ┌──────────────┐ ┌──────────────┐
+│Connection Pool│ │Materialization│ │   Testing    │
+│  (Threads)    │ │  Strategies   │ │  Framework   │
+└───────┬───────┘ └──────┬───────┘ └──────────────┘
+        │                 │
+        │    ┌────────────┴────────────┐
+        │    │                         │
+        ▼    ▼                         ▼
+    ┌──────────────┐    ┌──────────────────────┐
+    │  Snowflake   │    │ Table/View/Incremental│
+    │  Database    │    │      /Snapshot        │
+    └──────────────┘    └──────────────────────┘
+
+External Integrations:
+    dbt Cloud ──┐
+    CI/CD ──────┼──→ dbt CLI
+    Lineage ────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                              PYTHON FRAMEWORK ARCHITECTURE                           │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+
+                    ┌─────────────┐
+                    │  CLI Interface│
+                    │  (framework) │
+                    └──────┬───────┘
+                           │
+        ┌──────────────────┼──────────────────┐
+        │                  │                  │
+        ▼                  ▼                  ▼
+┌───────────────┐  ┌──────────────┐  ┌──────────────┐
+│ Config Manager│  │ profiles.yml │  │ sources.yml  │
+│               │  │  (Connection)│  │ (Source Defs)│
+└───────┬───────┘  └──────────────┘  └──────────────┘
+        │
+        ▼
+┌────────────────────────┐
+│     SQL Parser         │
+│  (sqlglot AST + Jinja) │
+└────────────┬───────────┘
+             │
+             ▼
+┌────────────────────────┐
+│    AST Analysis        │
+│  (Dependency Extract)  │
+└────────────┬───────────┘
+             │
+             ▼
+┌────────────────────────┐
+│ Dependency Graph Builder│
+│  (Manual Construction) │
+└────────────┬───────────┘
+             │
+             ▼
+┌────────────────────────┐
+│    Execution Plan      │
+│  (Based on Lineage)    │
+└────────────┬───────────┘
+             │
+    ┌────────┼────────┐
+    │        │        │
+    ▼        ▼        ▼
+┌────────┐ ┌──────────────┐ ┌──────────────┐
+│Connection│ │ Materializer │ │ State Manager│
+│  Pool   │ │  (Strategies) │ │  (Tracking)  │
+└────┬────┘ └──────┬───────┘ └──────────────┘
+     │             │
+     │    ┌────────┴────────┐
+     │    │                 │
+     ▼    ▼                 ▼
+┌──────────────┐  ┌──────────────────────┐
+│  Snowflake   │  │ View/Table/Temp/      │
+│  Database    │  │ Incremental/CDC       │
+└──────────────┘  └──────┬────────────────┘
+                         │
+                         ▼
+            ┌────────────────────────┐
+            │   Polars CDC Engine    │
+            │  (Rust-based, Fast)    │
+            └────────────┬────────────┘
+                         │
+                         ▼
+            ┌────────────────────────┐
+            │  Retirement Pattern     │
+            │  (History Preservation) │
+            └────────────────────────┘
+
+Custom Features:
+    Lineage Tracking ──┐
+    Backfill Engine ───┼──→ Execution Plan
+    Watcher Service ───┘
+```
+
+### Detailed Execution Flow Comparison
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                              dbt EXECUTION FLOW                                     │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+
+1. User Command
+   │
+   ▼
+2. dbt CLI parses command
+   │
+   ▼
+3. Load project config (dbt_project.yml)
+   │
+   ▼
+4. Load connection (profiles.yml)
+   │
+   ▼
+5. Parse all SQL models
+   │  ┌─────────────────┐
+   │  │ • Extract ref()  │
+   │  │ • Extract source()│
+   │  │ • Parse config   │
+   │  └─────────────────┘
+   │
+   ▼
+6. Build dependency graph (AUTOMATIC)
+   │  ┌─────────────────┐
+   │  │ • Auto-detect    │
+   │  │ • Build edges    │
+   │  │ • Topological    │
+   │  │   sort           │
+   │  └─────────────────┘
+   │
+   ▼
+7. Create execution plan
+   │  ┌─────────────────┐
+   │  │ • Parallel groups│
+   │  │ • Execution order│
+   │  └─────────────────┘
+   │
+   ▼
+8. Execute models (parallel)
+   │  ┌─────────────────┐
+   │  │ • Compile SQL   │
+   │  │ • Materialize    │
+   │  │ • Run tests     │
+   │  └─────────────────┘
+   │
+   ▼
+9. Generate documentation
+   │
+   ▼
+10. Complete
+
+
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                         PYTHON FRAMEWORK EXECUTION FLOW                             │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+
+1. User Command
+   │
+   ▼
+2. CLI Interface parses command
+   │
+   ▼
+3. Load configs
+   │  ┌─────────────────┐
+   │  │ • profiles.yml  │
+   │  │ • sources.yml   │
+   │  │ • environments  │
+   │  └─────────────────┘
+   │
+   ▼
+4. SQL Parser processes models
+   │  ┌─────────────────┐
+   │  │ • sqlglot AST   │
+   │  │ • Jinja render  │
+   │  │ • Extract deps   │
+   │  └─────────────────┘
+   │
+   ▼
+5. Build dependency graph (MANUAL)
+   │  ┌─────────────────┐
+   │  │ • Parse ref()    │
+   │  │ • Build graph    │
+   │  │ • Lineage track  │
+   │  │   (MANDATORY)    │
+   │  └─────────────────┘
+   │
+   ▼
+6. Create execution plan
+   │  ┌─────────────────┐
+   │  │ • Check lineage  │
+   │  │ • Parallel groups│
+   │  │ • State check    │
+   │  └─────────────────┘
+   │
+   ▼
+7. Execute models
+   │  ┌─────────────────┐
+   │  │ • Materializer   │
+   │  │ • CDC engine     │
+   │  │ • State update   │
+   │  └─────────────────┘
+   │
+   ▼
+8. Complete
+```
+
+### Materialization Strategy Comparison
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                           dbt MATERIALIZATION STRATEGIES                             │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+
+Execution Plan
+      │
+      ├──► View Materialization
+      │         │
+      │         └──► CREATE OR REPLACE VIEW
+      │
+      ├──► Table Materialization
+      │         │
+      │         └──► CREATE OR REPLACE TABLE
+      │
+      ├──► Incremental Materialization
+      │         │
+      │         ├──► Time-based (append)
+      │         ├──► Unique key (merge)
+      │         └──► Append-only
+      │
+      └──► Snapshot Materialization
+                │
+                └──► SCD Type 2 (history)
+
+
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                      PYTHON FRAMEWORK MATERIALIZATION STRATEGIES                     │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+
+Execution Plan
+      │
+      ├──► View Materialization
+      │         │
+      │         └──► CREATE OR REPLACE VIEW
+      │
+      ├──► Table Materialization
+      │         │
+      │         └──► CREATE OR REPLACE TABLE
+      │
+      ├──► Temp Table Materialization
+      │         │
+      │         └──► CREATE TEMP TABLE
+      │
+      ├──► Incremental Materialization
+      │         │
+      │         ├──► Time-based (append)
+      │         ├──► Unique key (merge)
+      │         └──► Append-only
+      │
+      └──► CDC Materialization (Polars)
+              │
+              ├──► Polars CDC Engine
+              │         │
+              │         ├──► INSERT (obsolete_date = NULL)
+              │         ├──► UPDATE (retire old + insert new)
+              │         └──► DELETE (set obsolete_date)
+              │
+              └──► Retirement Pattern
+                      │
+                      └──► Full History Preservation
 ```
 
 **Key Components:**
+
+**dbt:**
 - **dbt Core**: Open-source transformation engine
 - **Compilation**: Jinja2 templating + SQL compilation
-- **Dependency Resolution**: Automatic graph building
+- **Dependency Resolution**: Automatic graph building from `ref()` calls
 - **Materialization**: Built-in strategies (table, view, incremental, snapshot)
 - **Testing**: Built-in data quality tests
 - **Documentation**: Auto-generated from YAML
 
-### Python Framework Architecture
-
-```mermaid
-graph TB
-    subgraph "Python Framework"
-        A[CLI Interface] --> B[Config Manager]
-        B --> C[profiles.yml]
-        B --> D[sources.yml]
-        B --> E[environments.yml]
-        
-        A --> F[SQL Parser]
-        F --> G[AST Analysis]
-        G --> H[Dependency Graph Builder]
-        H --> I[Execution Plan]
-        
-        I --> J[Connection Pool]
-        J --> K[(Snowflake)]
-        
-        I --> L[Materializer]
-        L --> M[View/Table/Temp/Incremental/CDC]
-        
-        L --> N[Polars CDC Engine]
-        N --> O[Retirement Pattern]
-    end
-    
-    subgraph "Custom Features"
-        P[State Management] -.-> I
-        Q[Lineage Tracking] -.-> H
-        R[Backfill Engine] -.-> I
-        S[Watcher Service] -.-> A
-    end
-```
-
-**Key Components:**
+**Python Framework:**
 - **Custom Python Framework**: Purpose-built transformation engine
 - **SQL Parsing**: sqlglot AST + Jinja2 templating
-- **Dependency Resolution**: Manual graph building with lineage tracking
+- **Dependency Resolution**: Manual graph building with lineage tracking (MANDATORY)
 - **Materialization**: Custom strategies including Polars-based CDC
 - **State Management**: Custom state tracking for incremental models
-- **Lineage**: Column-level lineage tracking
+- **Lineage**: Column-level lineage tracking (required for parallel execution)
 
 ---
 
