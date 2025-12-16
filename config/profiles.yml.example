@@ -27,6 +27,13 @@ default:
       # authenticator: snowflake
       # private_key: ${SNOWFLAKE_PRIVATE_KEY_PATH}
       # private_key_passphrase: ${SNOWFLAKE_PRIVATE_KEY_PASSPHRASE}  # Optional
+      
+      # Connection pool settings (optional, dbt-style)
+      # threads: 1            # Default: 1 (dbt-style, controls concurrent connections)
+      #                       # For parallel model execution, increase threads (e.g., threads: 4)
+      # lazy_init: true       # Default: true (create connections as needed)
+      # max_retries: 3        # Default: 3
+      # retry_delay: 1.0      # Default: 1.0 seconds
     
     prod:
       type: snowflake
@@ -53,4 +60,11 @@ default:
       authenticator: snowflake
       private_key: ${SNOWFLAKE_PRIVATE_KEY_PATH}
       private_key_passphrase: ${SNOWFLAKE_PRIVATE_KEY_PASSPHRASE}  # Optional
+      
+      # Connection pool settings (optional, dbt-style)
+      # threads: 4            # Default: 1 (dbt-style, controls concurrent connections)
+      #                       # For parallel model execution, increase threads (e.g., threads: 4)
+      # lazy_init: true       # Default: true (create connections as needed)
+      # max_retries: 3        # Default: 3
+      # retry_delay: 1.0      # Default: 1.0 seconds
 

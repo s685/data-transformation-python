@@ -33,56 +33,69 @@ class ConnectionPool:
     def __init__(
         self,
         connection_config: Dict[str, Any],
-        pool_size: int = 5,
+        pool_size: int = 1,
         max_retries: int = 3,
         retry_delay: float = 1.0,
-        query_timeout: int = 300
+        query_timeout: int = 300,
+        lazy_init: bool = True
     ):
         """
         Initialize connection pool
         
         Args:
             connection_config: Snowflake connection configuration
-            pool_size: Maximum number of connections in pool
+            pool_size: Maximum number of connections in pool (default: 1 for single operations)
             max_retries: Maximum retry attempts for failed operations
             retry_delay: Initial delay between retries (exponential backoff)
             query_timeout: Query timeout in seconds
+            lazy_init: If True, create connections on-demand. If False, pre-create all connections.
         """
         self.connection_config = connection_config
         self.pool_size = pool_size
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.query_timeout = query_timeout
+        self.lazy_init = lazy_init
         
         self._pool: List[snowflake.connector.SnowflakeConnection] = []
         self._lock = Lock()
         self._initialized = False
     
     def initialize(self):
-        """Initialize the connection pool"""
+        """
+        Initialize the connection pool
+        If lazy_init is True, only marks as initialized (connections created on-demand)
+        If lazy_init is False, pre-creates all connections
+        """
         if self._initialized:
             return
         
-        logger.info(f"Initializing connection pool with size {self.pool_size}")
-        
-        with self._lock:
-            for i in range(self.pool_size):
-                try:
-                    conn = self._create_connection()
-                    self._pool.append(conn)
-                    logger.debug(f"Created connection {i+1}/{self.pool_size}")
-                except Exception as e:
-                    logger.error(f"Failed to create connection {i+1}: {e}")
-                    # Continue with smaller pool size
-            
-            if not self._pool:
-                raise FrameworkConnectionError(
-                    "Failed to create any connections in pool",
-                    context={"pool_size": self.pool_size}
-                )
-            
+        if self.lazy_init:
+            # Lazy initialization - connections created on-demand
+            logger.info(f"Connection pool configured with lazy initialization (max size: {self.pool_size}, lazy_init: {self.lazy_init})")
             self._initialized = True
-            logger.info(f"Connection pool initialized with {len(self._pool)} connections")
+        else:
+            # Pre-create all connections
+            logger.info(f"Initializing connection pool with size {self.pool_size}")
+            
+            with self._lock:
+                for i in range(self.pool_size):
+                    try:
+                        conn = self._create_connection()
+                        self._pool.append(conn)
+                        logger.debug(f"Created connection {i+1}/{self.pool_size}")
+                    except Exception as e:
+                        logger.error(f"Failed to create connection {i+1}: {e}")
+                        # Continue with smaller pool size
+                
+                if not self._pool:
+                    raise FrameworkConnectionError(
+                        "Failed to create any connections in pool",
+                        context={"pool_size": self.pool_size}
+                    )
+                
+                self._initialized = True
+                logger.info(f"Connection pool initialized with {len(self._pool)} connections")
     
     def _create_connection(self) -> snowflake.connector.SnowflakeConnection:
         """
@@ -206,6 +219,7 @@ class ConnectionPool:
     def get_connection(self):
         """
         Get a connection from the pool (context manager)
+        Creates connections on-demand if lazy_init is True
         
         Yields:
             Snowflake connection
@@ -217,10 +231,15 @@ class ConnectionPool:
         try:
             with self._lock:
                 if self._pool:
+                    # Reuse existing connection from pool
                     conn = self._pool.pop(0)
+                elif len(self._pool) < self.pool_size:
+                    # Create new connection if under pool size limit
+                    conn = self._create_connection()
+                    logger.debug(f"Created new connection on-demand (pool: {len(self._pool) + 1}/{self.pool_size}, lazy_init: {self.lazy_init})")
                 else:
-                    # Pool exhausted, create new connection
-                    logger.warning("Connection pool exhausted, creating new connection")
+                    # Pool exhausted, create new connection (will be closed after use)
+                    logger.debug("Pool size limit reached, creating temporary connection")
                     conn = self._create_connection()
             
             # Check connection health
@@ -235,15 +254,17 @@ class ConnectionPool:
             yield conn
             
         finally:
-            # Return connection to pool
+            # Return connection to pool if there's room
             if conn:
                 with self._lock:
                     if len(self._pool) < self.pool_size:
                         self._pool.append(conn)
+                        logger.debug(f"Returned connection to pool ({len(self._pool)}/{self.pool_size})")
                     else:
                         # Pool is full, close the connection
                         try:
                             conn.close()
+                            logger.debug("Pool full, closed connection")
                         except:
                             pass
     

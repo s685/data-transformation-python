@@ -20,6 +20,8 @@ from framework.testing import TestRunner
 from framework.backfill import BackfillExecutor
 from framework.watcher import create_file_watcher
 from utils.logger import get_logger, setup_file_logging
+
+logger = get_logger(__name__)
 from utils.errors import FrameworkError
 
 logger = get_logger(__name__)
@@ -64,7 +66,18 @@ def run(ctx, models, vars, dry_run, target):
         
         # Initialize components
         conn_config = config.get_connection_config()
-        sf_executor = create_executor(conn_config)
+        # Extract pool configuration if provided
+        pool_config = conn_config.pop('_pool_config', {})
+        # Filter out None values to avoid passing invalid arguments
+        pool_config = {k: v for k, v in pool_config.items() if v is not None}
+        # Ensure lazy_init defaults to True if not specified
+        if 'lazy_init' not in pool_config:
+            pool_config['lazy_init'] = True
+        # Ensure pool_size defaults to 1 if not specified
+        if 'pool_size' not in pool_config:
+            pool_config['pool_size'] = 1
+        logger.debug(f"Pool config: {pool_config}")
+        sf_executor = create_executor(conn_config, **pool_config)
         parser = SQLParser(config.get_models_dir())
         model_executor = ModelExecutor(sf_executor, parser, config=config, fail_fast=False)
         
@@ -114,7 +127,18 @@ def run_all(ctx, vars, target):
         
         # Initialize
         conn_config = config.get_connection_config()
-        sf_executor = create_executor(conn_config)
+        # Extract pool configuration if provided
+        pool_config = conn_config.pop('_pool_config', {})
+        # Filter out None values to avoid passing invalid arguments
+        pool_config = {k: v for k, v in pool_config.items() if v is not None}
+        # Ensure lazy_init defaults to True if not specified
+        if 'lazy_init' not in pool_config:
+            pool_config['lazy_init'] = True
+        # Ensure pool_size defaults to 1 if not specified
+        if 'pool_size' not in pool_config:
+            pool_config['pool_size'] = 1
+        logger.debug(f"Pool config: {pool_config}")
+        sf_executor = create_executor(conn_config, **pool_config)
         parser = SQLParser(config.get_models_dir())
         
         # Parse all models

@@ -266,6 +266,47 @@ class Config:
                 )
         
         logger.debug(f"Loaded connection config for target: {target} (auth: {authenticator})")
+        
+        # Extract connection pool settings (if provided)
+        # These are not part of Snowflake connection params, so remove them
+        pool_config = {}
+        pool_keys = ['threads', 'pool_size', 'lazy_init', 'max_retries', 'retry_delay', 'query_timeout']
+        for key in pool_keys:
+            if key in config:
+                value = config.pop(key)
+                # Skip None or empty values
+                if value is None or value == '':
+                    continue
+                # Convert YAML string booleans to Python booleans
+                if key == 'lazy_init':
+                    if isinstance(value, str):
+                        pool_config[key] = value.lower() in ('true', '1', 'yes')
+                    elif isinstance(value, bool):
+                        pool_config[key] = value
+                # Convert threads/pool_size to int
+                elif key in ['threads', 'pool_size', 'max_retries', 'query_timeout']:
+                    try:
+                        pool_config[key] = int(value)
+                    except (ValueError, TypeError):
+                        continue  # Skip invalid values
+                # Convert retry_delay to float
+                elif key == 'retry_delay':
+                    try:
+                        pool_config[key] = float(value)
+                    except (ValueError, TypeError):
+                        continue  # Skip invalid values
+                else:
+                    pool_config[key] = value
+        
+        # dbt-style: threads parameter controls pool size
+        # If threads is specified, use it as pool_size (dbt compatibility)
+        if 'threads' in pool_config and 'pool_size' not in pool_config:
+            pool_config['pool_size'] = pool_config['threads']
+        
+        # Store pool config separately if any pool settings were provided
+        if pool_config:
+            config['_pool_config'] = pool_config
+        
         return config
     
     def get_environment_config(self, environment: str) -> Dict[str, Any]:
