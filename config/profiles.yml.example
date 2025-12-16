@@ -1,22 +1,56 @@
 default:
+  target: dev
+  
   outputs:
     dev:
       type: snowflake
-      account: your_account
-      user: your_user
-      password: ${SNOWFLAKE_PASSWORD}
+      account: your_account_identifier
+      user: your_username
       warehouse: dev_warehouse
       database: dev_database
       schema: dev_schema
       role: dev_role
+      
+      # Authentication: Choose ONE method below
+      # 
+      # Method 1: Password authentication (default)
+      password: ${SNOWFLAKE_PASSWORD}
+      
+      # Method 2: SSO with external browser
+      # authenticator: externalbrowser
+      
+      # Method 3: OAuth token
+      # authenticator: oauth
+      # token: ${SNOWFLAKE_OAUTH_TOKEN}
+      
+      # Method 4: Private key pair
+      # authenticator: snowflake
+      # private_key: ${SNOWFLAKE_PRIVATE_KEY_PATH}
+      # private_key_passphrase: ${SNOWFLAKE_PRIVATE_KEY_PASSPHRASE}  # Optional
+    
     prod:
       type: snowflake
-      account: your_account
-      user: your_user
-      password: ${SNOWFLAKE_PASSWORD}
+      account: your_account_identifier
+      user: your_username
       warehouse: prod_warehouse
       database: prod_database
       schema: prod_schema
       role: prod_role
-  target: dev
+      
+      # Authentication: Choose ONE method below
+      # 
+      # Method 1: Password authentication
+      # password: ${SNOWFLAKE_PASSWORD}
+      
+      # Method 2: SSO with external browser
+      # authenticator: externalbrowser
+      
+      # Method 3: OAuth token
+      # authenticator: oauth
+      # token: ${SNOWFLAKE_OAUTH_TOKEN}
+      
+      # Method 4: Private key pair (recommended for production)
+      authenticator: snowflake
+      private_key: ${SNOWFLAKE_PRIVATE_KEY_PATH}
+      private_key_passphrase: ${SNOWFLAKE_PRIVATE_KEY_PASSPHRASE}  # Optional
 

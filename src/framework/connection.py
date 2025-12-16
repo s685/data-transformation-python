@@ -1,11 +1,15 @@
 """
 Snowflake connection pool with retry logic, health checks, and session variable support
+Supports multiple authentication methods: password, SSO, and private key pair
 """
 
 import time
+import os
 from typing import Dict, Any, Optional, List
 from contextlib import contextmanager
 from threading import Lock
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.backends import default_backend
 import snowflake.connector
 from snowflake.connector import DictCursor
 from snowflake.connector.errors import Error as SnowflakeError
@@ -81,25 +85,121 @@ class ConnectionPool:
             logger.info(f"Connection pool initialized with {len(self._pool)} connections")
     
     def _create_connection(self) -> snowflake.connector.SnowflakeConnection:
-        """Create a new Snowflake connection"""
+        """
+        Create a new Snowflake connection
+        Supports multiple authentication methods:
+        - Password authentication (default)
+        - SSO (Single Sign-On) via external browser or OAuth
+        - Private key pair authentication
+        """
         try:
-            conn = snowflake.connector.connect(
-                account=self.connection_config.get('account'),
-                user=self.connection_config.get('user'),
-                password=self.connection_config.get('password'),
-                warehouse=self.connection_config.get('warehouse'),
-                database=self.connection_config.get('database'),
-                schema=self.connection_config.get('schema'),
-                role=self.connection_config.get('role'),
-                session_parameters={
+            # Base connection parameters
+            conn_params = {
+                'account': self.connection_config.get('account'),
+                'user': self.connection_config.get('user'),
+                'warehouse': self.connection_config.get('warehouse'),
+                'database': self.connection_config.get('database'),
+                'schema': self.connection_config.get('schema'),
+                'role': self.connection_config.get('role'),
+                'session_parameters': {
                     'QUERY_TAG': 'data-transformation-framework'
                 }
-            )
+            }
+            
+            # Determine authentication method based on what's actually configured
+            # Priority: explicit authenticator > password (if no authenticator specified)
+            authenticator = self.connection_config.get('authenticator')
+            
+            if authenticator in ['externalbrowser', 'oauth']:
+                # SSO Authentication (explicit)
+                conn_params['authenticator'] = authenticator
+                if authenticator == 'oauth' and 'token' in self.connection_config:
+                    conn_params['token'] = self.connection_config.get('token')
+                logger.debug(f"Using SSO authentication: {authenticator}")
+                
+            elif authenticator == 'snowflake' and 'private_key' in self.connection_config:
+                # Private key pair authentication (explicit)
+                private_key = self._load_private_key(
+                    self.connection_config.get('private_key'),
+                    self.connection_config.get('private_key_passphrase')
+                )
+                conn_params['private_key'] = private_key
+                logger.debug("Using private key pair authentication")
+                
+            elif 'password' in self.connection_config:
+                # Password authentication (default when no authenticator specified)
+                conn_params['password'] = self.connection_config.get('password')
+                logger.debug("Using password authentication")
+                
+            else:
+                raise ConfigurationError(
+                    "No valid authentication method found. Provide one of: "
+                    "password, authenticator='externalbrowser', authenticator='oauth' with token, "
+                    "or authenticator='snowflake' with private_key"
+                )
+            
+            conn = snowflake.connector.connect(**conn_params)
             return conn
+            
         except SnowflakeError as e:
             raise FrameworkConnectionError(
                 f"Failed to create Snowflake connection: {str(e)}",
                 context={"account": self.connection_config.get('account')}
+            )
+        except Exception as e:
+            raise FrameworkConnectionError(
+                f"Failed to create Snowflake connection: {str(e)}",
+                context={"account": self.connection_config.get('account')}
+            )
+    
+    def _load_private_key(
+        self, 
+        private_key_path_or_pem: str, 
+        passphrase: Optional[str] = None
+    ) -> bytes:
+        """
+        Load private key from file path or PEM string
+        
+        Args:
+            private_key_path_or_pem: Path to private key file or PEM string
+            passphrase: Optional passphrase for encrypted private key
+        
+        Returns:
+            Private key as bytes
+        """
+        try:
+            # Check if it's a file path or PEM string
+            if os.path.exists(private_key_path_or_pem):
+                # Load from file
+                with open(private_key_path_or_pem, 'rb') as key_file:
+                    private_key_pem = key_file.read()
+            else:
+                # Assume it's a PEM string
+                private_key_pem = private_key_path_or_pem.encode('utf-8')
+            
+            # Load the private key
+            private_key = serialization.load_pem_private_key(
+                private_key_pem,
+                password=passphrase.encode('utf-8') if passphrase else None,
+                backend=default_backend()
+            )
+            
+            # Serialize to PKCS8 format (Snowflake requires this format)
+            pkb = private_key.private_bytes(
+                encoding=serialization.Encoding.DER,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption()
+            )
+            
+            return pkb
+            
+        except FileNotFoundError:
+            raise ConfigurationError(
+                f"Private key file not found: {private_key_path_or_pem}"
+            )
+        except Exception as e:
+            raise ConfigurationError(
+                f"Failed to load private key: {str(e)}"
             )
     
     @contextmanager

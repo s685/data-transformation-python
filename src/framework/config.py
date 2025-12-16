@@ -240,7 +240,32 @@ class Config:
                 context={"target": target}
             )
         
-        logger.debug(f"Loaded connection config for target: {target}")
+        # Validate authentication method
+        authenticator = config.get('authenticator', 'password')
+        
+        if authenticator in ['externalbrowser', 'oauth']:
+            # SSO authentication
+            if authenticator == 'oauth' and 'token' not in config:
+                raise ConfigurationError(
+                    "OAuth authentication requires 'token' field in connection config",
+                    context={"target": target, "authenticator": authenticator}
+                )
+        elif authenticator == 'snowflake':
+            # Private key pair authentication
+            if 'private_key' not in config:
+                raise ConfigurationError(
+                    "Private key authentication requires 'private_key' field in connection config",
+                    context={"target": target, "authenticator": authenticator}
+                )
+        else:
+            # Password authentication (default)
+            if 'password' not in config:
+                raise ConfigurationError(
+                    "Password authentication requires 'password' field in connection config",
+                    context={"target": target, "authenticator": authenticator}
+                )
+        
+        logger.debug(f"Loaded connection config for target: {target} (auth: {authenticator})")
         return config
     
     def get_environment_config(self, environment: str) -> Dict[str, Any]:

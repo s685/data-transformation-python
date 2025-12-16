@@ -61,6 +61,7 @@ your-project/
 **config/profiles.yml:**
 ```yaml
 default:
+  target: dev
   outputs:
     dev:
       type: snowflake
@@ -71,16 +72,16 @@ default:
       database: dev_database
       schema: dev_schema
       role: dev_role
+    # SSO with external browser
     prod:
       type: snowflake
       account: your_account
       user: your_user
-      password: ${SNOWFLAKE_PASSWORD}
+      authenticator: externalbrowser
       warehouse: prod_warehouse
       database: prod_database
       schema: prod_schema
       role: prod_role
-  target: dev
 ```
 
 **config/sources.yml:**
