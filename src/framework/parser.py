@@ -160,6 +160,11 @@ class SQLParser:
             # Extract inline config from comments
             config = self._extract_config_from_comments(raw_sql)
             
+            # Extract meta section from comments (YAML format)
+            meta = self._extract_meta_from_comments(raw_sql)
+            if meta:
+                config['meta'] = meta
+            
             # Extract dependencies from comments
             comment_deps = self._extract_dependencies_from_comments(raw_sql)
             
@@ -240,6 +245,47 @@ class SQLParser:
                     config[key.strip()] = value.strip()
         
         return config
+    
+    def _extract_meta_from_comments(self, sql: str) -> Dict[str, Any]:
+        """
+        Extract meta section from SQL comments (YAML format)
+        Format: -- meta:\n--   key: value
+        """
+        import yaml
+        meta = {}
+        lines = sql.split('\n')
+        meta_lines = []
+        in_meta = False
+        
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith('-- meta:'):
+                in_meta = True
+                # Start with empty dict for YAML parsing
+                continue
+            elif in_meta:
+                if stripped.startswith('--'):
+                    # Remove comment prefix and keep indentation
+                    meta_line = line[2:].strip()
+                    if meta_line:  # Skip empty comment lines
+                        meta_lines.append(meta_line)
+                elif stripped == '':
+                    # Empty line, continue
+                    continue
+                else:
+                    # End of meta section
+                    break
+        
+        if meta_lines:
+            try:
+                # Join lines and parse as YAML
+                yaml_str = '\n'.join(meta_lines)
+                meta = yaml.safe_load(yaml_str) or {}
+            except Exception as e:
+                logger.warning(f"Failed to parse meta section: {e}")
+                meta = {}
+        
+        return meta
     
     def _extract_dependencies_from_comments(self, sql: str) -> Set[str]:
         """

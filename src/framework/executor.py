@@ -10,6 +10,9 @@ import json
 from framework.connection import SnowflakeExecutor
 from framework.parser import ParsedSQL, SQLParser
 from framework.config import Config
+from framework.model import ModelConfig
+from framework.materialization import Materializer
+from framework.state import StateManager
 from utils.errors import ExecutionError, ModelExecutionError
 from utils.logger import get_logger, ExecutionMetrics
 
@@ -26,7 +29,8 @@ class ModelExecutor:
         snowflake_executor: SnowflakeExecutor,
         sql_parser: SQLParser,
         config: Optional[Config] = None,
-        fail_fast: bool = False
+        fail_fast: bool = False,
+        state_manager: Optional[StateManager] = None
     ):
         """
         Initialize model executor
@@ -36,12 +40,14 @@ class ModelExecutor:
             sql_parser: SQLParser instance
             config: Config instance for resolving sources
             fail_fast: If True, stop on first error. If False, continue execution.
+            state_manager: Optional state manager for tracking model state
         """
         self.sf_executor = snowflake_executor
         self.parser = sql_parser
         self.config = config
         self.fail_fast = fail_fast
         self.metrics = ExecutionMetrics()
+        self.materializer = Materializer(snowflake_executor, state_manager)
     
     def execute_model(
         self,
@@ -88,8 +94,19 @@ class ModelExecutor:
                     "variables": variables
                 }
             else:
-                # Execute SQL
-                query_result = self.sf_executor.execute_query(sql, variables, fetch=False)
+                # Convert parsed config to ModelConfig
+                model_config = self._create_model_config(model_name, parsed_sql.config)
+                
+                # Get full table name (database.schema.table) if config available
+                full_table_name = self._get_full_table_name(model_name)
+                
+                # Use Materializer to handle materialization (table, view, CDC, etc.)
+                materialization_result = self.materializer.materialize(
+                    model_name=full_table_name,
+                    select_sql=sql,
+                    model_config=model_config,
+                    variables=variables
+                )
                 
                 duration_ms = (datetime.now() - start_time).total_seconds() * 1000
                 
@@ -101,7 +118,9 @@ class ModelExecutor:
                     "status": "success",
                     "duration_ms": round(duration_ms, 2),
                     "variables": variables,
-                    "dependencies": list(parsed_sql.dependencies)
+                    "dependencies": list(parsed_sql.dependencies),
+                    "materialization": materialization_result.get("materialization", "view"),
+                    "materialization_status": materialization_result.get("status", "success")
                 }
             
             return result
@@ -168,6 +187,77 @@ class ModelExecutor:
         logger.info(f"Execution complete: {successful} succeeded, {failed} failed")
         
         return results
+    
+    def _get_full_table_name(self, model_name: str) -> str:
+        """
+        Get full qualified table name (database.schema.table)
+        
+        Args:
+            model_name: Model name (e.g., 'bronze.new_rfb' or 'new_rfb')
+        
+        Returns:
+            Full qualified table name
+        """
+        if not self.config:
+            return model_name
+        
+        # Get connection config for database and schema
+        try:
+            conn_config = self.config.get_connection_config()
+            database = conn_config.get('database', '')
+            schema = conn_config.get('schema', '')
+            
+            # If model_name already has layer prefix (e.g., 'bronze.new_rfb'), use it
+            if '.' in model_name:
+                parts = model_name.split('.')
+                if len(parts) == 2:
+                    layer, table = parts
+                    if database and schema:
+                        return f"{database}.{schema}.{table.upper()}"
+                    elif schema:
+                        return f"{schema}.{table.upper()}"
+                    else:
+                        return table.upper()
+            
+            # Otherwise, use database.schema.model_name
+            if database and schema:
+                return f"{database}.{schema}.{model_name.upper()}"
+            elif schema:
+                return f"{schema}.{model_name.upper()}"
+            else:
+                return model_name.upper()
+        except Exception:
+            # Fallback to model_name if config unavailable
+            return model_name
+    
+    def _create_model_config(self, model_name: str, config_dict: Dict[str, Any]) -> ModelConfig:
+        """
+        Create ModelConfig from parsed config dictionary
+        
+        Args:
+            model_name: Model name
+            config_dict: Configuration dictionary from parsed SQL comments
+        
+        Returns:
+            ModelConfig instance
+        """
+        # Parse meta section if present (for CDC config)
+        meta = {}
+        if 'meta' in config_dict:
+            meta = config_dict['meta']
+        
+        # Extract unique_key (can be comma-separated for composite keys)
+        unique_key = config_dict.get('unique_key')
+        
+        return ModelConfig(
+            name=model_name,
+            materialized=config_dict.get('materialized', 'view'),
+            incremental_strategy=config_dict.get('incremental_strategy'),
+            time_column=config_dict.get('time_column'),
+            unique_key=unique_key,
+            meta=meta,
+            depends_on=list(config_dict.get('depends_on', []))
+        )
     
     def _find_model_file(self, model_name: str) -> Path:
         """
