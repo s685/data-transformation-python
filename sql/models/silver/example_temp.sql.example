@@ -1,0 +1,14 @@
+-- Example temporary table for silver layer
+-- config: materialized=temp_table
+-- depends_on: bronze.raw_orders
+
+-- Temporary table for one-time data cleaning operation
+SELECT DISTINCT
+    customer_id,
+    customer_name,
+    email,
+    phone
+FROM {{ ref('bronze.raw_orders') }}
+WHERE order_date >= CURRENT_DATE() - 7
+  AND customer_id IS NOT NULL
+

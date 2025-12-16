@@ -1,0 +1,17 @@
+-- Example CDC model for bronze layer
+-- config: materialized=cdc, unique_key=order_id
+-- meta:
+--   cdc:
+--     change_type_column: __CDC_OPERATION
+
+SELECT
+    order_id,
+    customer_id,
+    order_date,
+    amount,
+    status,
+    __CDC_OPERATION,  -- 'I' (Insert), 'U' (Update), 'D' (Delete)
+    __CDC_TIMESTAMP
+FROM source_system.orders_cdc_stream
+WHERE __CDC_TIMESTAMP >= $start_date
+

@@ -1,0 +1,17 @@
+-- Example incremental table for gold layer
+-- config: materialized=incremental, incremental_strategy=time, time_column=order_date
+-- depends_on: silver.cleaned_orders
+
+SELECT
+    DATE_TRUNC('day', order_date) as order_day,
+    customer_id,
+    COUNT(*) as daily_orders,
+    SUM(amount) as daily_revenue,
+    AVG(amount) as avg_order_value
+FROM {{ ref('silver.cleaned_orders') }}
+WHERE order_date >= $start_date
+{% if is_incremental() %}
+    AND order_date > (SELECT MAX(order_date) FROM {{ this }})
+{% endif %}
+GROUP BY DATE_TRUNC('day', order_date), customer_id
+

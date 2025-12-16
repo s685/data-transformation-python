@@ -1,0 +1,95 @@
+models:
+  # Bronze Layer Examples
+  - name: bronze.raw_orders
+    description: "Raw orders data from source system"
+    config:
+      materialized: incremental
+      incremental_strategy: append
+      time_column: load_timestamp
+    vars:
+      - start_date
+    depends_on: []
+
+  - name: bronze.raw_customers_cdc
+    description: "CDC stream of customer changes"
+    config:
+      materialized: cdc
+      unique_key: customer_id
+    meta:
+      cdc:
+        change_type_column: __CDC_OPERATION
+        columns: [customer_id, customer_name, email]
+    depends_on: []
+
+  # Silver Layer Examples
+  - name: silver.cleaned_orders
+    description: "Cleaned and validated orders"
+    config:
+      materialized: view
+    columns:
+      - name: order_id
+        description: "Unique order identifier"
+        tests:
+          - unique
+          - not_null
+      - name: amount
+        description: "Order amount"
+        tests:
+          - not_null
+    depends_on:
+      - bronze.raw_orders
+
+  - name: silver.cleaned_customers
+    description: "Cleaned customer data with deduplication"
+    config:
+      materialized: table
+    depends_on:
+      - bronze.raw_customers_cdc
+
+  # Gold Layer Examples
+  - name: gold.sales_summary
+    description: "Monthly sales summary"
+    config:
+      materialized: incremental
+      incremental_strategy: time
+      time_column: order_date
+    columns:
+      - name: month
+        description: "Sales month"
+        tests:
+          - not_null
+      - name: total_revenue
+        description: "Total revenue for the month"
+        tests:
+          - not_null
+    vars:
+      - start_date
+      - end_date
+    depends_on:
+      - silver.cleaned_orders
+
+  - name: gold.customer_lifetime_value
+    description: "Customer lifetime value metrics"
+    config:
+      materialized: table
+    columns:
+      - name: customer_id
+        description: "Customer identifier"
+        tests:
+          - unique
+          - not_null
+      - name: lifetime_value
+        description: "Total lifetime value"
+        tests:
+          - not_null
+    depends_on:
+      - silver.cleaned_orders
+      - silver.cleaned_customers
+
+  # Temporary Table Example
+  - name: gold.daily_sales_temp
+    description: "Temporary daily sales aggregation"
+    config:
+      materialized: temp_table
+    depends_on:
+      - silver.cleaned_orders

@@ -1,0 +1,29 @@
+# Sources configuration
+# Define external source tables that can be referenced using source() macro
+# Format: source('source_name', 'table_name')
+
+sources:
+  - name: raw_data
+    description: "Raw data source from external system"
+    database: RAW_DB
+    schema: RAW_SCHEMA
+    tables:
+      - name: orders
+        description: "Raw orders table"
+        identifier: ORDERS_TABLE
+      - name: customers
+        description: "Raw customers table"
+        identifier: CUSTOMERS_TABLE
+  
+  - name: staging
+    description: "Staging area tables"
+    database: STAGING_DB
+    schema: STAGING_SCHEMA
+    tables:
+      - name: events
+        description: "Event staging table"
+        identifier: EVENTS_STAGING
+      - name: transactions
+        description: "Transaction staging table"
+        identifier: TRANSACTIONS_STAGING
+

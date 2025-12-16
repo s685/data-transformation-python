@@ -1,0 +1,10 @@
+environments:
+  dev:
+    database: dev_database
+    schema: dev_schema
+    warehouse: dev_warehouse
+  prod:
+    database: prod_database
+    schema: prod_schema
+    warehouse: prod_warehouse
+

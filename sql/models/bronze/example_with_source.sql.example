@@ -1,0 +1,18 @@
+-- Example bronze model using source() macro for external tables
+-- config: materialized=incremental, incremental_strategy=append, time_column=load_timestamp
+
+-- Use source() for external source tables (not ref() for models)
+SELECT
+    order_id,
+    customer_id,
+    order_date,
+    amount,
+    status,
+    CURRENT_TIMESTAMP() as load_timestamp
+FROM {{ source('raw_data', 'orders') }}
+WHERE order_date >= $start_date
+  AND order_date <= $end_date
+
+-- Note: ref() is used for model dependencies
+-- Example: FROM {{ ref('silver.cleaned_orders') }}
+

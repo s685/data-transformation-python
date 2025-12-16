@@ -1,0 +1,24 @@
+-- Example silver model using ref() macro for model dependencies
+-- config: materialized=view
+-- depends_on: bronze.raw_orders
+
+-- Use ref() for model dependencies (other models in the framework)
+SELECT
+    order_id,
+    customer_id,
+    CAST(order_date AS DATE) as order_date,
+    CAST(amount AS DECIMAL(10,2)) as amount,
+    UPPER(TRIM(status)) as status,
+    load_timestamp
+FROM {{ ref('bronze.raw_orders') }}
+WHERE amount > 0
+  AND order_date IS NOT NULL
+  AND status IS NOT NULL
+QUALIFY ROW_NUMBER() OVER (
+    PARTITION BY order_id 
+    ORDER BY load_timestamp DESC
+) = 1
+
+-- Note: source() is used for external source tables
+-- Example: FROM {{ source('raw_data', 'orders') }}
+
